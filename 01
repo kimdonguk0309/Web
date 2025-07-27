@@ -1,0 +1,135 @@
+#!/bin/bash
+set -e
+
+echo "▶️ WebSuperClusterIDE 완전 자동 설치 시작..."
+
+# 1. Node.js 20 설치
+if ! node -v | grep -q "v20"; then
+    echo "📦 Node.js 20 설치 중..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+else
+    echo "✅ Node.js 이미 설치됨: $(node -v)"
+fi
+
+# 2. npm 최신 버전으로 업그레이드
+echo "⬆️ npm 최신 버전으로 업데이트..."
+sudo npm install -g npm
+
+# 3. 기존 frontend 제거
+echo "🧹 기존 frontend 폴더 삭제 중..."
+rm -rf frontend
+
+# 4. Vite + React + TypeScript 프로젝트 생성
+echo "⚙️ 프로젝트 생성 중..."
+npx create-vite frontend --template react-ts --force
+cd frontend
+
+# 5. 패키지 설치
+echo "📦 패키지 설치 중..."
+npm install
+
+# 6. TailwindCSS + shadcn/ui 설치
+echo "🎨 Tailwind & shadcn 설치 중..."
+npm install -D tailwindcss postcss autoprefixer
+npx tailwindcss init -p
+npm install class-variance-authority clsx tailwind-variants
+npm install @radix-ui/react-icons
+
+# 7. Tailwind 설정 추가
+cat > tailwind.config.ts <<EOF
+import type { Config } from 'tailwindcss'
+
+const config: Config = {
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  theme: { extend: {} },
+  plugins: [],
+}
+export default config
+EOF
+
+cat > src/index.css <<EOF
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+EOF
+
+# 8. Dashboard.tsx 생성
+mkdir -p src/components
+cat > src/components/Dashboard.tsx <<EOF
+import React, { useEffect, useState } from 'react'
+
+const NUM_CPUS = 100;
+const CPUBenchmark = () => {
+  const [benchmarks, setBenchmarks] = useState<number[]>([]);
+
+  useEffect(() => {
+    const workers: Worker[] = [];
+    const results: number[] = Array(NUM_CPUS).fill(0);
+    let completed = 0;
+
+    for (let i = 0; i < NUM_CPUS; i++) {
+      const blob = new Blob([`
+        onmessage = () => {
+          const start = performance.now();
+          let sum = 0;
+          for (let i = 0; i < 1e7; i++) sum += i;
+          const end = performance.now();
+          postMessage(end - start);
+        }
+      `], { type: 'application/javascript' });
+
+      const worker = new Worker(URL.createObjectURL(blob));
+      worker.onmessage = e => {
+        results[i] = e.data;
+        completed++;
+        if (completed === NUM_CPUS) setBenchmarks([...results]);
+      };
+      worker.postMessage(1);
+      workers.push(worker);
+    }
+
+    return () => workers.forEach(w => w.terminate());
+  }, []);
+
+  return (
+    <div className="grid grid-cols-4 gap-4 mt-8">
+      {benchmarks.map((ms, i) => (
+        <div key={i} className="bg-blue-100 p-2 rounded shadow text-sm">
+          CPU {i}: {ms.toFixed(2)} ms
+        </div>
+      ))}
+    </div>
+  );
+};
+
+export default CPUBenchmark;
+EOF
+
+# 9. App.tsx 덮어쓰기
+cat > src/App.tsx <<EOF
+import React from 'react'
+import './index.css'
+import Dashboard from './components/Dashboard'
+
+function App() {
+  return (
+    <div className="p-8 font-sans">
+      <h1 className="text-3xl font-bold mb-4 text-center">⚙️ WebSuperClusterIDE</h1>
+      <p className="text-center text-gray-700">100개 가상 WebAssembly CPU 벤치마크</p>
+      <Dashboard />
+    </div>
+  )
+}
+
+export default App
+EOF
+
+# 10. 개발 서버 실행
+echo "🚀 개발 서버 실행 중..."
+npm run dev -- --host &
+sleep 3
+
+echo ""
+echo "✅ 설치 완료! 접속 주소:"
+echo "🌐 http://<서버-IP>:5173"
